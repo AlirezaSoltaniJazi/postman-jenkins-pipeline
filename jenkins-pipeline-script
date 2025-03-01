@@ -1,0 +1,65 @@
+pipeline {
+  agent any
+
+# Replace NodeJS with the name of the NodeJS installation in your Jenkins configuration
+  tools { nodejs 'NodeJS' }
+
+  stages {
+    stage('Install Postman CLI') {
+      steps {
+        sh '''
+          # Determine the correct URL based on system architecture
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            POSTMAN_URL="https://dl-cli.pstmn.io/download/latest/osx_64"
+          elif [ "$ARCH" = "arm64" ]; then
+            POSTMAN_URL="https://dl-cli.pstmn.io/download/latest/osx_arm64"
+          else
+            echo "Unsupported architecture: $ARCH"
+            exit 1
+          fi
+
+          # Download the appropriate ZIP archive
+          curl -L "$POSTMAN_URL" -o postman.zip
+
+          # Unzip the archive
+          unzip -o postman.zip -d postman-cli
+
+          # Change to the directory
+          cd postman-cli
+
+          # Make the postman-cli binary executable
+          chmod +x postman-cli
+
+          # Remove quarantine attribute if necessary
+          xattr -d com.apple.quarantine postman-cli || true
+        '''
+      }
+    }
+
+    stage('Postman CLI Login') {
+      steps {
+        # Set postman-api-key value in Jenkins credentials
+        withCredentials([string(credentialsId: 'postman-api-key', variable: 'POSTMAN_API_KEY')]) {
+          sh '''
+            cd postman-cli
+            ./postman-cli login --with-api-key $POSTMAN_API_KEY
+          '''
+        }
+      }
+    }
+
+    stage('Running collection') {
+      steps {
+        sh '''
+          cd postman-cli
+          ./postman-cli collection run "collectionID" \
+            --reporters junit,cli \
+            --reporter-junit-export "test-results.xml"
+        '''
+        // Publish JUnit test result report
+        junit 'postman-cli/test-results.xml'
+      }
+    }
+  }
+}
